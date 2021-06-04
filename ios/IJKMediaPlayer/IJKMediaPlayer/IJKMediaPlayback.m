@@ -55,6 +55,11 @@ NSString *const IJKMPMoviePlayerDidAccurateSeekCompleteCurPos = @"IJKMPMoviePlay
 NSString *const IJKMPMoviePlayerSeekAudioStartNotification  = @"IJKMPMoviePlayerSeekAudioStartNotification";
 NSString *const IJKMPMoviePlayerSeekVideoStartNotification  = @"IJKMPMoviePlayerSeekVideoStartNotification";
 
+#pragma mark for flutter
+NSString *const IJKMPMoviePlayerVideoRotationNotification  = @"IJKMPMoviePlayerVideoRotationNotification";
+NSString *const IJKMPMoviePlayerVideoRotationRotateUserInfoKey  = @"IJKMPMoviePlayerVideoRotationRotateUserInfoKey";
+//end
+
 @implementation IJKMediaUrlOpenData {
     NSString *_url;
     BOOL _handled;

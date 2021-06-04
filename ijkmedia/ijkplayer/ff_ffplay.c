@@ -21,6 +21,12 @@
  */
 
 #include "ff_ffplay.h"
+//add for flutter
+#if !defined (__ANDROID__)
+#include "ijksdl_vout_overlay_videotoolbox.h"
+#include <libyuv.h>
+#endif
+//end
 
 /**
  * @file
@@ -563,6 +569,123 @@ fail0:
     return ret;
 }
 
+//add for flutter
+#if !defined (__ANDROID__)
+static int copyAVFrameToPixelBuffer(FFPlayer *ffp, AVCodecParameters* avcp, const AVFrame* frame, CVPixelBufferRef cv_img, const size_t* plane_strides, const size_t* plane_rows)
+{
+    int status;
+    
+    status = CVPixelBufferLockBaseAddress(cv_img, 0);
+    if (status) {
+        av_log(
+               avcp,
+               AV_LOG_ERROR,
+               "Error: Could not lock base address of CVPixelBuffer: %d.\n",
+               status
+               );
+    }
+    
+    uint8* src_y = frame->data[0];
+    uint8* src_u = frame->data[1];
+    uint8* src_v = frame->data[2];
+    void* addr = CVPixelBufferGetBaseAddress(cv_img);
+    
+    int src_stride_y = frame->linesize[0];
+    int src_stride_u = frame->linesize[1];
+    int src_stride_v = frame->linesize[2];
+    size_t dst_width = CVPixelBufferGetBytesPerRow(cv_img);
+    
+    int src_width = frame->width;
+    int src_height = frame->height;
+    
+    I420ToARGB(src_y, src_stride_y,
+               src_u, src_stride_u,
+               src_v, src_stride_v,
+               addr, dst_width,
+               src_width, src_height);
+    
+    status = CVPixelBufferUnlockBaseAddress(cv_img, 0);
+    if (status) {
+        av_log(avcp, AV_LOG_ERROR, "Error: Could not unlock CVPixelBuffer base address: %d.\n", status);
+        return AVERROR_EXTERNAL;
+    }
+    
+    return 0;
+}
+
+int createCVPixelBuffer(FFPlayer *ffp, AVCodecParameters* avcp, AVFrame* frame, CVPixelBufferRef* cvImage)
+{
+    size_t widths [AV_NUM_DATA_POINTERS];
+    size_t heights[AV_NUM_DATA_POINTERS];
+    size_t strides[AV_NUM_DATA_POINTERS];
+    int status;
+    
+    memset(widths,  0, sizeof(widths));
+    memset(heights, 0, sizeof(heights));
+    memset(strides, 0, sizeof(strides));
+    
+    widths[0] = avcp->width;
+    heights[0] = avcp->height;
+    strides[0] = frame ? frame->linesize[0] : avcp->width;
+    
+    widths[1] = (avcp->width + 1)/2;
+    heights[1] = (avcp->height + 1)/2;
+    strides[1] = frame? frame->linesize[1] : (avcp ->width + 1)/2;
+    
+    widths[2] = (avcp->width + 1)/2;
+    heights[2] = (avcp->height + 1)/2;
+    strides[2] = frame? frame->linesize[2] : (avcp ->width + 1)/2;
+    
+    if (!ffp->szt_pixelbuffer)
+    {
+        CFDictionaryRef empty; // empty value for attr value.
+        CFMutableDictionaryRef attrs;
+        empty = CFDictionaryCreate(kCFAllocatorDefault, // our empty IOSurface properties dictionary
+                                   NULL,
+                                   NULL,
+                                   0,
+                                   &kCFTypeDictionaryKeyCallBacks,
+                                   &kCFTypeDictionaryValueCallBacks);
+        attrs = CFDictionaryCreateMutable(kCFAllocatorDefault,
+                                          1,
+                                          &kCFTypeDictionaryKeyCallBacks,
+                                          &kCFTypeDictionaryValueCallBacks);
+        
+        CFDictionarySetValue(attrs,
+                             kCVPixelBufferIOSurfacePropertiesKey,
+                             empty);
+        
+        status = CVPixelBufferCreate(
+                                     kCFAllocatorDefault,
+                                     frame->width,
+                                     frame->height,
+                                     kCVPixelFormatType_32BGRA,
+                                     attrs,
+                                     cvImage
+                                     );
+        CFRelease(attrs);
+        CFRelease(empty);
+        
+        if (status)
+        {
+            return AVERROR_EXTERNAL;
+        }
+    }
+    
+    
+    status = copyAVFrameToPixelBuffer(ffp, avcp, frame, *cvImage, strides, heights);
+    if (status)
+    {
+        CFRelease(*cvImage);
+        *cvImage = NULL;
+        return status;
+    }
+    
+    return 0;
+}
+#endif
+//end
+
 static int decoder_decode_frame(FFPlayer *ffp, Decoder *d, AVFrame *frame, AVSubtitle *sub) {
     int ret = AVERROR(EAGAIN);
 
@@ -584,6 +707,28 @@ static int decoder_decode_frame(FFPlayer *ffp, Decoder *d, AVFrame *frame, AVSub
                             } else if (!ffp->decoder_reorder_pts) {
                                 frame->pts = frame->pkt_dts;
                             }
+                            #if defined (__ANDROID__)
+                            ffp_frame_lock(ffp);
+                            ffp->current_frame = frame;
+                            ffp_frame_unlock(ffp);
+                            #endif
+                            //add for flutter
+                             #if !defined (__ANDROID__)
+                            ffp_pixelbuffer_lock(ffp);
+                            CVPixelBufferRef cvImage = NULL;
+                            if (ffp->szt_pixelbuffer)
+                            {
+                                cvImage = ffp->szt_pixelbuffer;
+                            }
+                            ret = createCVPixelBuffer(ffp, ffp->is->video_st->codecpar, frame, &cvImage);
+
+                            if (!ret)
+                            {
+                                ffp->szt_pixelbuffer = cvImage;
+                            }
+                            ffp_pixelbuffer_unlock(ffp);
+                            #endif
+                            //add end
                         }
                         break;
                     case AVMEDIA_TYPE_AUDIO:
@@ -908,7 +1053,12 @@ static void video_image_display2(FFPlayer *ffp)
                 SDL_Delay(20);
             }
         }
-        SDL_VoutDisplayYUVOverlay(ffp->vout, vp->bmp);
+        //add for flutter
+            #if defined (__ANDROID__)
+            SDL_VoutDisplayYUVOverlay(ffp->vout, vp->bmp);
+            #endif
+        //end
+//        SDL_VoutDisplayYUVOverlay(ffp->vout, vp->bmp);
         ffp->stat.vfps = SDL_SpeedSamplerAdd(&ffp->vfps_sampler, FFP_SHOW_VFPS_FFPLAY, "vfps[ffplay]");
         if (!ffp->first_video_frame_rendered) {
             ffp->first_video_frame_rendered = 1;
@@ -1660,6 +1810,21 @@ static int queue_picture(FFPlayer *ffp, AVFrame *src_frame, double pts, double d
             av_log(NULL, AV_LOG_FATAL, "Cannot initialize the conversion context\n");
             exit(1);
         }
+        
+        //add for flutter
+        #if !defined (__ANDROID__)
+        if (ffp -> videotoolbox) {
+            // TODO edit
+            ffp_pixelbuffer_lock(ffp);
+            ffp->szt_pixelbuffer = SDL_VoutOverlayVideoToolBox_GetCVPixelBufferRef(vp->bmp);  // picture->opaque;
+            ffp_pixelbuffer_unlock(ffp);
+
+            if (!ffp->szt_pixelbuffer) {
+                ALOGE("nil pixelBuffer in overlay\n");
+            }
+        }
+        #endif
+        //add end
         /* update the bitmap content */
         SDL_VoutUnlockYUVOverlay(vp->bmp);
 
@@ -5048,3 +5213,38 @@ IjkMediaMeta *ffp_get_meta_l(FFPlayer *ffp)
 
     return ffp->meta;
 }
+
+//add for flutter
+#if !defined (__ANDROID__)
+int ffp_pixelbuffer_mutex_init(FFPlayer *ffp)
+{
+    int ret = pthread_mutex_init(&ffp->szt_pixelbuffer_mutex, NULL);
+    return ret;
+}
+            
+int ffp_pixelbuffer_lock(FFPlayer *ffp)
+{
+    int ret = pthread_mutex_lock(&ffp->szt_pixelbuffer_mutex);
+    return ret;
+}
+            
+int ffp_pixelbuffer_unlock(FFPlayer *ffp)
+{
+    int ret = pthread_mutex_unlock(&ffp->szt_pixelbuffer_mutex);
+    return ret;
+}
+#endif
+            
+int ffp_frame_mutex_init(FFPlayer *ffp){
+    int ret = pthread_mutex_init(&ffp->current_frame_mutex, NULL);
+    return ret;
+}
+int ffp_frame_lock(FFPlayer *ffp){
+    int ret = pthread_mutex_lock(&ffp->current_frame_mutex);
+    return ret;
+}
+int ffp_frame_unlock(FFPlayer *ffp){
+    int ret = pthread_mutex_unlock(&ffp->current_frame_mutex);
+    return ret;
+}
+//end

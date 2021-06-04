@@ -116,6 +116,19 @@ void      ffp_set_property_float(FFPlayer *ffp, int id, float value);
 int64_t   ffp_get_property_int64(FFPlayer *ffp, int id, int64_t default_value);
 void      ffp_set_property_int64(FFPlayer *ffp, int id, int64_t value);
 
+//add for flutter
+#if !defined (__ANDROID__)
+int       ffp_pixelbuffer_mutex_init(FFPlayer *ffp);
+int       ffp_pixelbuffer_lock(FFPlayer *ffp);
+int       ffp_pixelbuffer_unlock(FFPlayer *ffp);
+#endif
+
+int ffp_frame_mutex_init(FFPlayer *ffp);
+int ffp_frame_lock(FFPlayer *ffp);
+int ffp_frame_unlock(FFPlayer *ffp);
+//end
+
+
 // must be freed with free();
 struct IjkMediaMeta *ffp_get_meta_l(FFPlayer *ffp);
 
